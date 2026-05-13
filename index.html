@@ -156,6 +156,11 @@
       <p class="total-sub" id="totalSub">Loading…</p>
     </div>
     <div class="header-actions">
+      <div id="syncStatus" style="display:none;align-items:center;gap:6px;font-size:12px;color:var(--text-3);padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);"></div>
+      <button class="btn" onclick="openGistSettings()" title="Sync settings">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M2 12h3M19 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12"/></svg>
+        Sync
+      </button>
       <button class="btn btn-primary" onclick="openSnapshotModal()">
         <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12l7-7 7 7"/></svg>
         Save snapshot
@@ -250,6 +255,29 @@
   </div>
 
   <p style="font-size:12px;color:var(--text-3);text-align:right;margin-top:1rem;" id="lastSaved"></p>
+</div>
+
+<!-- Gist settings modal -->
+<div class="overlay" id="gistOverlay">
+  <div class="modal" style="width:460px;">
+    <p class="modal-title">Sync with GitHub Gist</p>
+    <p style="font-size:13px;color:var(--text-2);margin-bottom:1.25rem;line-height:1.6;">Store your data in a private GitHub Gist so it syncs across all your devices. One-time setup.</p>
+    <div class="form-row">
+      <label>GitHub Personal Access Token</label>
+      <input type="password" id="gist_token" placeholder="ghp_xxxxxxxxxxxx">
+      <p style="font-size:11px;color:var(--text-3);margin-top:4px;">Needs <strong>gist</strong> scope only. <a href="https://github.com/settings/tokens/new?scopes=gist&description=NetWorthDashboard" target="_blank" style="color:var(--blue);">Create one here ↗</a></p>
+    </div>
+    <div class="form-row">
+      <label>Gist ID <span style="font-weight:400;color:var(--text-3);">(leave blank to create a new one)</span></label>
+      <input type="text" id="gist_id" placeholder="e.g. a1b2c3d4e5f6...">
+    </div>
+    <div id="gist_msg" style="font-size:13px;padding:8px 12px;border-radius:var(--radius-sm);margin-bottom:12px;display:none;"></div>
+    <div class="modal-btns">
+      <button class="btn" onclick="closeGistSettings()">Cancel</button>
+      <button class="btn" onclick="gistPull()" id="btnPull" style="display:none;">Pull from Gist</button>
+      <button class="btn btn-primary" onclick="gistSetup()">Connect & Push</button>
+    </div>
+  </div>
 </div>
 
 <!-- Edit asset modal -->
@@ -734,19 +762,189 @@ function switchTab(name) {
 
 // ─── Keyboard / overlay close ─────────────────────────────────────────────────
 
-['editOverlay','historyOverlay','snapshotOverlay'].forEach(id => {
+['editOverlay','historyOverlay','snapshotOverlay','gistOverlay'].forEach(id => {
   document.getElementById(id).addEventListener('click', function(e) { if(e.target===this) this.classList.remove('open'); });
 });
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') ['editOverlay','historyOverlay','snapshotOverlay'].forEach(id => document.getElementById(id).classList.remove('open'));
+  if (e.key === 'Escape') ['editOverlay','historyOverlay','snapshotOverlay','gistOverlay'].forEach(id => document.getElementById(id).classList.remove('open'));
   if (e.key === 'Enter' && document.getElementById('editOverlay').classList.contains('open')) saveEdit();
   if (e.key === 'Enter' && document.getElementById('historyOverlay').classList.contains('open')) saveHistoryEntry();
 });
+
+// ─── Gist Sync ────────────────────────────────────────────────────────────────
+
+const GIST_FILE = 'networth-data.json';
+
+function getGistCreds() {
+  return {
+    token: load('gist_token', null),
+    id:    load('gist_id', null)
+  };
+}
+
+function setSyncStatus(msg, color) {
+  const el = document.getElementById('syncStatus');
+  el.style.display = 'flex';
+  el.innerHTML = `<span style="width:7px;height:7px;border-radius:50%;background:${color};flex-shrink:0;"></span>${msg}`;
+}
+
+function gistPayload() {
+  return JSON.stringify({ history, assets, exportedAt: new Date().toISOString() }, null, 2);
+}
+
+async function gistPush() {
+  const { token, id } = getGistCreds();
+  if (!token || !id) return;
+  setSyncStatus('Syncing…', '#c4922a');
+  try {
+    const res = await fetch(`https://api.github.com/gists/${id}`, {
+      method: 'PATCH',
+      headers: { Authorization: `token ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ files: { [GIST_FILE]: { content: gistPayload() } } })
+    });
+    if (!res.ok) throw new Error(res.status);
+    const now = new Date().toLocaleTimeString('en-IN', {hour:'2-digit', minute:'2-digit'});
+    setSyncStatus('Synced ' + now, '#2d7a4f');
+  } catch(e) {
+    setSyncStatus('Sync failed', '#c0392b');
+  }
+}
+
+async function gistPull() {
+  const { token, id } = getGistCreds();
+  if (!token || !id) { gistMsg('Enter token and Gist ID first', 'warn'); return; }
+  gistMsg('Pulling from Gist…', 'info');
+  try {
+    const res = await fetch(`https://api.github.com/gists/${id}`, {
+      headers: { Authorization: `token ${token}` }
+    });
+    if (!res.ok) throw new Error(res.status);
+    const data = await res.json();
+    const raw = data.files?.[GIST_FILE]?.content;
+    if (!raw) throw new Error('File not found in Gist');
+    const parsed = JSON.parse(raw);
+    if (parsed.history) { history = parsed.history; save('nw_history', history); }
+    if (parsed.assets) { assets = parsed.assets; save('nw_assets', assets); }
+    gistMsg('Pulled successfully! Reloading…', 'ok');
+    setTimeout(() => { closeGistSettings(); renderAll(); }, 1200);
+  } catch(e) {
+    gistMsg('Failed: ' + e.message, 'error');
+  }
+}
+
+async function gistSetup() {
+  const token = document.getElementById('gist_token').value.trim();
+  const existingId = document.getElementById('gist_id').value.trim();
+  if (!token) { gistMsg('Token is required', 'warn'); return; }
+  gistMsg('Connecting…', 'info');
+  try {
+    let gistId = existingId;
+    if (!gistId) {
+      // Create a new private gist
+      const res = await fetch('https://api.github.com/gists', {
+        method: 'POST',
+        headers: { Authorization: `token ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          description: 'Net Worth Dashboard Data',
+          public: false,
+          files: { [GIST_FILE]: { content: gistPayload() } }
+        })
+      });
+      if (!res.ok) throw new Error('Could not create Gist — check token permissions');
+      const data = await res.json();
+      gistId = data.id;
+      gistMsg('New Gist created! ID: ' + gistId, 'ok');
+    } else {
+      // Push to existing gist
+      const res = await fetch(`https://api.github.com/gists/${gistId}`, {
+        method: 'PATCH',
+        headers: { Authorization: `token ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files: { [GIST_FILE]: { content: gistPayload() } } })
+      });
+      if (!res.ok) throw new Error('Could not update Gist — check ID and token');
+      gistMsg('Pushed to existing Gist!', 'ok');
+    }
+    // Save credentials
+    save('gist_token', token);
+    save('gist_id', gistId);
+    document.getElementById('gist_id').value = gistId;
+    document.getElementById('btnPull').style.display = 'inline-flex';
+    setSyncStatus('Gist connected', '#2d7a4f');
+    gistMsg('✓ Connected! Your Gist ID: ' + gistId + ' — copy this for other devices.', 'ok');
+  } catch(e) {
+    gistMsg(e.message, 'error');
+  }
+}
+
+function gistMsg(msg, type) {
+  const el = document.getElementById('gist_msg');
+  const colors = { ok:'#2d7a4f', error:'#c0392b', warn:'#c4922a', info:'#2563a8' };
+  const bgs = { ok:'#f0faf4', error:'#fdf0f0', warn:'#fffbf0', info:'#f0f4ff' };
+  el.style.display = 'block';
+  el.style.color = colors[type] || '#333';
+  el.style.background = bgs[type] || '#f9f8f6';
+  el.style.border = `1px solid ${colors[type]}33`;
+  el.textContent = msg;
+}
+
+function openGistSettings() {
+  const { token, id } = getGistCreds();
+  if (token) document.getElementById('gist_token').value = token;
+  if (id) { document.getElementById('gist_id').value = id; document.getElementById('btnPull').style.display = 'inline-flex'; }
+  document.getElementById('gist_msg').style.display = 'none';
+  document.getElementById('gistOverlay').classList.add('open');
+}
+function closeGistSettings() { document.getElementById('gistOverlay').classList.remove('open'); }
+
+// Auto-push to Gist after every save operation
+const _origSave = save;
+function saveAndSync(key, val) {
+  _origSave(key, val);
+  if (key === 'nw_history' || key === 'nw_assets') {
+    const { token, id } = getGistCreds();
+    if (token && id) gistPush();
+  }
+}
+
+// Override save globally for auto-sync
+window.save = saveAndSync;
+
+// Auto-pull on load if credentials exist
+async function autoSync() {
+  const { token, id } = getGistCreds();
+  if (!token || !id) return;
+  setSyncStatus('Syncing…', '#c4922a');
+  try {
+    const res = await fetch(`https://api.github.com/gists/${id}`, {
+      headers: { Authorization: `token ${token}` }
+    });
+    if (!res.ok) throw new Error();
+    const data = await res.json();
+    const raw = data.files?.[GIST_FILE]?.content;
+    if (!raw) throw new Error();
+    const parsed = JSON.parse(raw);
+    // Only update if Gist has newer/more data
+    if (parsed.history && parsed.history.length >= history.length) {
+      history = parsed.history;
+      _origSave('nw_history', history);
+    }
+    if (parsed.assets) {
+      assets = parsed.assets;
+      _origSave('nw_assets', assets);
+    }
+    const now = new Date().toLocaleTimeString('en-IN', {hour:'2-digit', minute:'2-digit'});
+    setSyncStatus('Synced ' + now, '#2d7a4f');
+    renderAll();
+  } catch(e) {
+    setSyncStatus('Offline — local data', '#a09d97');
+  }
+}
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
 renderAll();
 fetchGold();
+autoSync();
 </script>
 </body>
 </html>
