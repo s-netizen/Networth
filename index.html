@@ -363,74 +363,37 @@ function getTotal() { return assets.reduce((s,a) => s+a.value, 0); }
 
 async function fetchGold() {
   const banner = document.getElementById('goldStatus');
-  banner.textContent = 'Fetching live gold price…';
-
-  const APIS = [
-    async () => {
-      const r = await fetch('https://api.metals.live/v1/spot/gold');
-      if (!r.ok) throw new Error();
-      const d = await r.json();
-      // returns USD per troy oz, convert to INR using approx rate
-      const usdPerOz = d[0]?.price || d?.price;
-      if (!usdPerOz) throw new Error();
-      const usdInr = await fetch('https://api.exchangerate-api.com/v4/latest/USD').then(r=>r.json()).then(d=>d.rates.INR).catch(()=>84.5);
-      return (usdPerOz * usdInr) / 31.1035;
-    },
-    async () => {
-      // frankfurter.app — CORS-open, ECB data, no key needed
-      const r = await fetch('https://api.frankfurter.app/latest?from=XAU&to=INR');
-      if (!r.ok) throw new Error();
-      const d = await r.json();
-      // d.rates.INR = INR per 1 troy oz
-      return d.rates.INR / 31.1035;
-    },
-    async () => {
-      const today = new Date().toISOString().slice(0,10);
-      const r = await fetch(`https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@${today}/v1/currencies/xau.json`);
-      if (!r.ok) throw new Error();
-      const d = await r.json();
-      return d.xau.inr / 31.1035;
-    },
-  ];
-
-  for (const api of APIS) {
-    try {
-      const price = await api();
-      if (!price || price < 3000) throw new Error('bad value');
-      goldPricePerGram = price;
-      const goldAsset = assets.find(a => a.id === 'gold');
-      if (goldAsset) {
-        goldAsset.value = Math.round(goldPricePerGram * goldAsset.grams);
-        save('nw_assets', assets);
-      }
-      // Save to cache so fallback stays fresh
-      const today = new Date().toLocaleDateString('en-IN', {day:'numeric', month:'short', year:'numeric'});
-      save('nw_gold_cache', { price: goldPricePerGram, date: today });
-      banner.innerHTML = `<strong>Gold:</strong> ₹${Math.round(goldPricePerGram).toLocaleString('en-IN')}/g · 20g = ${fmt(goldAsset.value)} <span style="color:var(--gold);font-size:11px;">● live</span>`;
-      renderAll();
-      return;
-    } catch(e) { continue; }
-  }
-
-  // All APIs failed — use last successfully fetched price from localStorage
-  const cached = load('nw_gold_cache', null);
-  const goldAsset = assets.find(a => a.id === 'gold');
-  if (cached && cached.price) {
-    goldPricePerGram = cached.price;
+  banner.textContent = 'Fetching gold price…';
+  try {
+    // Reads gold.json written daily by GitHub Actions — same origin, no CORS issue
+    const r = await fetch('./gold.json?t=' + Date.now());
+    if (!r.ok) throw new Error('no gold.json');
+    const d = await r.json();
+    if (!d.price || d.price < 5000) throw new Error('bad value');
+    goldPricePerGram = d.price;
+    const goldAsset = assets.find(a => a.id === 'gold');
     if (goldAsset) {
       goldAsset.value = Math.round(goldPricePerGram * goldAsset.grams);
       save('nw_assets', assets);
     }
-    banner.innerHTML = `<strong>Gold:</strong> ₹${Math.round(goldPricePerGram).toLocaleString('en-IN')}/g · 20g = ${fmt(goldAsset.value)} <span style="color:var(--text-3);font-size:11px;">● cached ${cached.date}</span>`;
-  } else {
-    goldPricePerGram = 16804; // 24K Delhi rate, 13 May 2026
-    if (goldAsset) {
-      goldAsset.value = Math.round(goldPricePerGram * goldAsset.grams);
-      save('nw_assets', assets);
+    save('nw_gold_cache', { price: goldPricePerGram, date: d.date });
+    banner.innerHTML = `<strong>Gold:</strong> ₹${Math.round(goldPricePerGram).toLocaleString('en-IN')}/g · 20g = ${fmt(goldAsset.value)} <span style="color:var(--gold);font-size:11px;">● updated ${d.date}</span>`;
+    renderAll();
+  } catch(e) {
+    // Fallback to last cached price
+    const cached = load('nw_gold_cache', null);
+    const goldAsset = assets.find(a => a.id === 'gold');
+    if (cached && cached.price) {
+      goldPricePerGram = cached.price;
+      if (goldAsset) { goldAsset.value = Math.round(goldPricePerGram * goldAsset.grams); save('nw_assets', assets); }
+      banner.innerHTML = `<strong>Gold:</strong> ₹${Math.round(goldPricePerGram).toLocaleString('en-IN')}/g · 20g = ${fmt(goldAsset.value)} <span style="color:var(--text-3);font-size:11px;">● cached ${cached.date}</span>`;
+    } else {
+      goldPricePerGram = 16804;
+      if (goldAsset) { goldAsset.value = Math.round(goldPricePerGram * goldAsset.grams); save('nw_assets', assets); }
+      banner.innerHTML = `<strong>Gold:</strong> ₹${goldPricePerGram.toLocaleString('en-IN')}/g · 20g = ${fmt(goldAsset.value)} <span style="color:var(--text-3);font-size:11px;">● seed rate 13 May 2026</span>`;
     }
-    banner.innerHTML = `<strong>Gold:</strong> ₹${goldPricePerGram.toLocaleString('en-IN')}/g · 20g = ${fmt(goldAsset.value)} <span style="color:var(--text-3);font-size:11px;">● fallback rate · refresh when online</span>`;
+    renderAll();
   }
-  renderAll();
 }
 
 // ─── Render ───────────────────────────────────────────────────────────────────
