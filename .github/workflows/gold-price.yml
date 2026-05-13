@@ -39,7 +39,7 @@ jobs:
                 # International spot per gram
                 spot = inr_per_oz / 31.1035
                 # Apply India premium: 15% import duty + 3% GST + ~2% misc = ~20.6%
-                price_per_gram = round(spot * 1.206, 2)
+                price_per_gram = round(spot * 1.1644, 2)
                 print(f"Spot: ₹{spot:.2f}/g → with India duty+GST: ₹{price_per_gram}/g")
                 break
             except Exception as e:
