@@ -327,7 +327,7 @@ const DEFAULT_ASSETS = [
   { id:'rsu',      label:'Akamai RSU',          emoji:'🏢', value:554053.06,  color:'#1d7a5a', goldLinked:false },
   { id:'unlisted', label:'Precize Unlisted',    emoji:'🔒', value:34537.65,   color:'#7c6fd4', goldLinked:false },
   { id:'crowdcube',label:'Crowdcube',           emoji:'🌍', value:28000,      color:'#c05a2a', goldLinked:false },
-  { id:'gold',     label:'Gold (20g)',           emoji:'✦',  value:291940,     color:'#c4922a', goldLinked:true, grams:20 },
+  { id:'gold',     label:'Gold (20g)',           emoji:'✦',  value:336080,     color:'#c4922a', goldLinked:true, grams:20 },
   { id:'ppf',      label:'PPF',                 emoji:'🛡', value:258720,     color:'#3a8c50', goldLinked:false },
   { id:'pf',       label:'PF',                  emoji:'🐖', value:345370,     color:'#6b6961', goldLinked:false },
 ];
@@ -364,23 +364,73 @@ function getTotal() { return assets.reduce((s,a) => s+a.value, 0); }
 async function fetchGold() {
   const banner = document.getElementById('goldStatus');
   banner.textContent = 'Fetching live gold price…';
-  try {
-    // Use a CORS-friendly open API for gold price in INR
-    const res = await fetch('https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/xau.json');
-    const data = await res.json();
-    const inrPerTroyOz = data.xau.inr;
-    // 1 troy oz = 31.1035g
-    goldPricePerGram = inrPerTroyOz / 31.1035;
-    const goldAsset = assets.find(a => a.id === 'gold');
+
+  const APIS = [
+    async () => {
+      const r = await fetch('https://api.metals.live/v1/spot/gold');
+      if (!r.ok) throw new Error();
+      const d = await r.json();
+      // returns USD per troy oz, convert to INR using approx rate
+      const usdPerOz = d[0]?.price || d?.price;
+      if (!usdPerOz) throw new Error();
+      const usdInr = await fetch('https://api.exchangerate-api.com/v4/latest/USD').then(r=>r.json()).then(d=>d.rates.INR).catch(()=>84.5);
+      return (usdPerOz * usdInr) / 31.1035;
+    },
+    async () => {
+      // frankfurter.app — CORS-open, ECB data, no key needed
+      const r = await fetch('https://api.frankfurter.app/latest?from=XAU&to=INR');
+      if (!r.ok) throw new Error();
+      const d = await r.json();
+      // d.rates.INR = INR per 1 troy oz
+      return d.rates.INR / 31.1035;
+    },
+    async () => {
+      const today = new Date().toISOString().slice(0,10);
+      const r = await fetch(`https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@${today}/v1/currencies/xau.json`);
+      if (!r.ok) throw new Error();
+      const d = await r.json();
+      return d.xau.inr / 31.1035;
+    },
+  ];
+
+  for (const api of APIS) {
+    try {
+      const price = await api();
+      if (!price || price < 3000) throw new Error('bad value');
+      goldPricePerGram = price;
+      const goldAsset = assets.find(a => a.id === 'gold');
+      if (goldAsset) {
+        goldAsset.value = Math.round(goldPricePerGram * goldAsset.grams);
+        save('nw_assets', assets);
+      }
+      // Save to cache so fallback stays fresh
+      const today = new Date().toLocaleDateString('en-IN', {day:'numeric', month:'short', year:'numeric'});
+      save('nw_gold_cache', { price: goldPricePerGram, date: today });
+      banner.innerHTML = `<strong>Gold:</strong> ₹${Math.round(goldPricePerGram).toLocaleString('en-IN')}/g · 20g = ${fmt(goldAsset.value)} <span style="color:var(--gold);font-size:11px;">● live</span>`;
+      renderAll();
+      return;
+    } catch(e) { continue; }
+  }
+
+  // All APIs failed — use last successfully fetched price from localStorage
+  const cached = load('nw_gold_cache', null);
+  const goldAsset = assets.find(a => a.id === 'gold');
+  if (cached && cached.price) {
+    goldPricePerGram = cached.price;
     if (goldAsset) {
       goldAsset.value = Math.round(goldPricePerGram * goldAsset.grams);
       save('nw_assets', assets);
     }
-    banner.innerHTML = `<strong>Gold:</strong> ₹${Math.round(goldPricePerGram).toLocaleString('en-IN')}/g · 20g = ${fmt(goldAsset.value)} <span style="color:var(--gold);font-size:11px;">● live</span>`;
-    renderAll();
-  } catch(e) {
-    banner.textContent = 'Could not fetch live gold price. Using stored value.';
+    banner.innerHTML = `<strong>Gold:</strong> ₹${Math.round(goldPricePerGram).toLocaleString('en-IN')}/g · 20g = ${fmt(goldAsset.value)} <span style="color:var(--text-3);font-size:11px;">● cached ${cached.date}</span>`;
+  } else {
+    goldPricePerGram = 16804; // 24K Delhi rate, 13 May 2026
+    if (goldAsset) {
+      goldAsset.value = Math.round(goldPricePerGram * goldAsset.grams);
+      save('nw_assets', assets);
+    }
+    banner.innerHTML = `<strong>Gold:</strong> ₹${goldPricePerGram.toLocaleString('en-IN')}/g · 20g = ${fmt(goldAsset.value)} <span style="color:var(--text-3);font-size:11px;">● fallback rate · refresh when online</span>`;
   }
+  renderAll();
 }
 
 // ─── Render ───────────────────────────────────────────────────────────────────
