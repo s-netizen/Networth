@@ -1,0 +1,44 @@
+name: Update Gold Price
+
+on:
+  schedule:
+    - cron: '30 4 * * *'   # 10:00 AM IST (4:30 UTC)
+    - cron: '30 9 * * *'   # 3:00 PM IST  (9:30 UTC)
+    - cron: '30 15 * * *'  # 9:00 PM IST  (15:30 UTC)
+  workflow_dispatch:        # manual trigger from GitHub Actions tab
+
+jobs:
+  update-gold:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Fetch gold price and write gold.json
+        run: |
+          GOLD_PER_GRAM=$(curl -s "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/xau.json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(round(d['xau']['inr']/31.1035, 2))" 2>/dev/null)
+
+          if [ -z "$GOLD_PER_GRAM" ] || [ "$GOLD_PER_GRAM" = "None" ]; then
+            echo "Primary API failed, trying fallback..."
+            TODAY=$(date +'%Y-%m-%d')
+            GOLD_PER_GRAM=$(curl -s "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@${TODAY}/v1/currencies/xau.json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(round(d['xau']['inr']/31.1035, 2))" 2>/dev/null)
+          fi
+
+          if [ -z "$GOLD_PER_GRAM" ] || [ "$GOLD_PER_GRAM" = "None" ]; then
+            echo "All APIs failed — skipping update"
+            exit 0
+          fi
+
+          DATE=$(TZ="Asia/Kolkata" date +'%d %b %Y, %I:%M %p IST')
+          VALUE=$(python3 -c "print(round($GOLD_PER_GRAM * 20))")
+
+          echo "{\"price\": $GOLD_PER_GRAM, \"date\": \"$DATE\", \"grams\": 20, \"value\": $VALUE}" > gold.json
+          echo "Gold price updated: ₹$GOLD_PER_GRAM/g → 20g = ₹$VALUE"
+          cat gold.json
+
+      - name: Commit gold.json
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add gold.json
+          git diff --staged --quiet || git commit -m "chore: gold price update — $(TZ='Asia/Kolkata' date +'%d %b %Y %I:%M %p IST')"
+          git push
