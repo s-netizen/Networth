@@ -156,13 +156,9 @@
       <p class="total-sub" id="totalSub">Loading…</p>
     </div>
     <div class="header-actions">
-      <button class="btn" onclick="openSnapshotModal()">
+      <button class="btn btn-primary" onclick="openSnapshotModal()">
         <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12l7-7 7 7"/></svg>
         Save snapshot
-      </button>
-      <button class="btn btn-primary" onclick="openHistoryEntryModal()">
-        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
-        Add history
       </button>
     </div>
   </div>
@@ -183,9 +179,17 @@
   <div class="section">
     <div class="section-header">
       <span class="section-title">Allocation</span>
+      <span id="allocTotalLabel" style="font-size:13px;color:var(--text-2);"></span>
     </div>
+    <!-- Stacked bar -->
+    <div class="chart-card" style="margin-bottom:16px;padding:20px 24px;">
+      <div id="stackedBar" style="height:36px;border-radius:8px;overflow:hidden;display:flex;margin-bottom:16px;"></div>
+      <div id="allocLegend" style="display:flex;flex-wrap:wrap;gap:12px 20px;"></div>
+    </div>
+    <!-- Two charts side by side -->
     <div class="charts-row">
       <div class="chart-card">
+        <p style="font-size:11px;font-weight:500;color:var(--text-2);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:14px;">Breakdown</p>
         <div class="donut-wrap">
           <canvas id="donutChart" role="img" aria-label="Portfolio allocation donut chart"></canvas>
           <div class="donut-center">
@@ -196,9 +200,7 @@
         <div class="legend-list" id="legendList"></div>
       </div>
       <div class="chart-card">
-        <div class="section-header" style="margin-bottom:10px;">
-          <span class="section-title">Net worth over time</span>
-        </div>
+        <p style="font-size:11px;font-weight:500;color:var(--text-2);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:14px;">Net worth over time</p>
         <div class="history-canvas-wrap">
           <canvas id="historyChart" role="img" aria-label="Net worth history line chart"></canvas>
         </div>
@@ -268,41 +270,47 @@
 
 <!-- History entry modal -->
 <div class="overlay" id="historyOverlay">
-  <div class="modal" style="width:440px;">
+  <div class="modal" style="width:480px;max-height:90vh;overflow-y:auto;">
     <p class="modal-title">Add historical entry</p>
     <div class="form-row">
       <label>Month</label>
       <input type="month" id="h_month">
     </div>
-    <div class="history-fields">
-      <div class="form-row">
-        <label>Stocks / MF / ETF (₹)</label>
-        <input type="number" id="h_equity" placeholder="0">
-      </div>
-      <div class="form-row">
-        <label>Akamai RSU (₹)</label>
-        <input type="number" id="h_rsu" placeholder="0">
-      </div>
-      <div class="form-row">
-        <label>Unlisted / Crowdcube (₹)</label>
-        <input type="number" id="h_unlisted" placeholder="0">
-      </div>
-      <div class="form-row">
-        <label>Gold (₹)</label>
-        <input type="number" id="h_gold" placeholder="0">
-      </div>
-      <div class="form-row">
-        <label>PPF (₹)</label>
-        <input type="number" id="h_ppf" placeholder="0">
-      </div>
-      <div class="form-row">
-        <label>PF (₹)</label>
-        <input type="number" id="h_pf" placeholder="0">
-      </div>
+    <p style="font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:10px;">Assets — enter values for this month</p>
+    <div class="form-row">
+      <label>📈 Stocks / MF / ETF (₹)</label>
+      <input type="number" id="h_equity" placeholder="0">
+    </div>
+    <div class="form-row">
+      <label>🏢 Akamai RSU (₹)</label>
+      <input type="number" id="h_rsu" placeholder="0">
+    </div>
+    <div class="form-row">
+      <label>🔒 Precize Unlisted (₹)</label>
+      <input type="number" id="h_unlisted" placeholder="0">
+    </div>
+    <div class="form-row">
+      <label>🌍 Crowdcube (₹)</label>
+      <input type="number" id="h_crowdcube" placeholder="0">
+    </div>
+    <div class="form-row">
+      <label>✦ Gold — 20g (₹)</label>
+      <input type="number" id="h_gold" placeholder="0">
+    </div>
+    <div class="form-row">
+      <label>🛡 PPF (₹)</label>
+      <input type="number" id="h_ppf" placeholder="0">
+    </div>
+    <div class="form-row">
+      <label>🐖 PF (₹)</label>
+      <input type="number" id="h_pf" placeholder="0">
+    </div>
+    <div id="h_total_preview" style="background:var(--surface2);border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:14px;font-size:13px;color:var(--text-2);display:none;">
+      Total: <strong id="h_total_val" style="color:var(--text);"></strong>
     </div>
     <div class="modal-btns">
       <button class="btn" onclick="closeHistory()">Cancel</button>
-      <button class="btn btn-primary" onclick="saveHistoryEntry()">Add entry</button>
+      <button class="btn btn-primary" onclick="saveHistoryEntry()">Save entry</button>
     </div>
   </div>
 </div>
@@ -339,11 +347,26 @@ function save(key, val) {
   try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
 }
 
-let assets = load('nw_assets', DEFAULT_ASSETS.map(a => ({...a})));
 let history = load('nw_history', []);
 let goldPricePerGram = null;
 let editingId = null;
 let donutChart = null, historyChart = null, breakdownChart = null;
+
+// Seed asset values from latest history entry, or zero if no history
+function seedAssetsFromHistory() {
+  const base = DEFAULT_ASSETS.map(a => ({...a, value: 0}));
+  if (history.length === 0) return base;
+  const latest = [...history].sort((a,b) => b.month.localeCompare(a.month))[0];
+  return base.map(a => {
+    const val = latest[a.id] ?? (a.id === 'ppf' ? latest.ppf : a.id === 'pf' ? latest.pf : 0);
+    return {...a, value: val || 0};
+  });
+}
+
+// Only use localStorage nw_assets if it was explicitly saved by user edits
+// If history exists but nw_assets doesn't, seed from history
+let _stored = load('nw_assets', null);
+let assets = _stored ? _stored : seedAssetsFromHistory();
 
 // ─── Formatting ──────────────────────────────────────────────────────────────
 
@@ -400,6 +423,17 @@ async function fetchGold() {
 
 function renderCards() {
   const total = getTotal();
+  const hasData = total > 0;
+
+  if (!hasData) {
+    document.getElementById('totalDisplay').textContent = '—';
+    document.getElementById('totalSub').textContent = 'No data yet · add a history entry or save a snapshot';
+    document.getElementById('cardGrid').innerHTML = `<div style="grid-column:1/-1;padding:2rem;text-align:center;color:var(--text-3);font-size:14px;border:1px dashed var(--border-strong);border-radius:var(--radius);">
+      No entries yet — click <strong style="color:var(--text);">Save snapshot</strong> to record today's values, or <strong style="color:var(--text);">Add entry</strong> in the History section to backfill past months.
+    </div>`;
+    return;
+  }
+
   document.getElementById('totalDisplay').textContent = fmt(total);
   document.getElementById('totalSub').textContent =
     'Across ' + assets.length + ' assets · click any card to edit';
@@ -410,8 +444,8 @@ function renderCards() {
     return `<div class="asset-card" style="--card-accent:${a.color}; animation-delay:${i*40}ms" onclick="openEdit('${a.id}')">
       <div class="card-icon">${a.emoji}</div>
       <div class="card-label">${a.label}</div>
-      <div class="card-value">${fmt(a.value)}</div>
-      <div class="card-pct">${pct}% of total${a.goldLinked ? ' · auto' : ''}</div>
+      <div class="card-value">${a.value > 0 ? fmt(a.value) : '—'}</div>
+      <div class="card-pct">${a.value > 0 ? pct + '% of total' : 'not set'}${a.goldLinked ? ' · auto' : ''}</div>
       <span class="card-edit-hint">click to edit →</span>
     </div>`;
   }).join('');
@@ -553,8 +587,30 @@ function renderHistoryTable() {
   }).join('');
 }
 
+function renderStackedBar() {
+  const total = getTotal();
+  document.getElementById('allocTotalLabel').textContent = fmt(total);
+  const bar = document.getElementById('stackedBar');
+  const legend = document.getElementById('allocLegend');
+  if (!bar) return;
+  bar.innerHTML = assets.map(a => {
+    const pct = (a.value / total * 100).toFixed(2);
+    return `<div title="${a.label}: ${fmt(a.value)} (${pct}%)" style="width:${pct}%;background:${a.color};transition:width 0.4s ease;"></div>`;
+  }).join('');
+  legend.innerHTML = assets.map(a => {
+    const pct = (a.value / total * 100).toFixed(1);
+    return `<div style="display:flex;align-items:center;gap:6px;font-size:12px;">
+      <span style="width:10px;height:10px;border-radius:2px;background:${a.color};flex-shrink:0;"></span>
+      <span style="color:var(--text-2);">${a.label}</span>
+      <span style="font-weight:500;color:var(--text);">${fmtShort(a.value)}</span>
+      <span style="color:var(--text-3);">${pct}%</span>
+    </div>`;
+  }).join('');
+}
+
 function renderAll() {
   renderCards();
+  renderStackedBar();
   renderDonut();
   renderHistoryChart();
   renderBreakdownChart();
@@ -587,13 +643,28 @@ function saveEdit() {
 
 // ─── History modal ────────────────────────────────────────────────────────────
 
+function updateHistoryPreview() {
+  const fields = ['equity','rsu','unlisted','crowdcube','gold','ppf','pf'];
+  const total = fields.reduce((s,id) => s + (parseFloat(document.getElementById('h_'+id)?.value)||0), 0);
+  const preview = document.getElementById('h_total_preview');
+  const val = document.getElementById('h_total_val');
+  if (total > 0) { preview.style.display='block'; val.textContent = fmt(total); }
+  else { preview.style.display='none'; }
+}
 function openHistoryEntryModal() {
   const now = new Date();
   document.getElementById('h_month').value = now.toISOString().slice(0,7);
-  ['equity','rsu','unlisted','gold','ppf','pf'].forEach(id => {
+  ['equity','rsu','unlisted','crowdcube','gold','ppf','pf'].forEach(id => {
     const a = assets.find(x => x.id === id);
-    document.getElementById('h_' + id).value = a ? Math.round(a.value) : '';
+    const el = document.getElementById('h_' + id);
+    if (el) el.value = a ? Math.round(a.value) : '';
   });
+  // attach live preview listeners
+  ['equity','rsu','unlisted','crowdcube','gold','ppf','pf'].forEach(id => {
+    const el = document.getElementById('h_' + id);
+    if (el) el.oninput = updateHistoryPreview;
+  });
+  updateHistoryPreview();
   document.getElementById('historyOverlay').classList.add('open');
 }
 function closeHistory() { document.getElementById('historyOverlay').classList.remove('open'); }
@@ -603,15 +674,18 @@ function saveHistoryEntry() {
   const equity = parseFloat(document.getElementById('h_equity').value)||0;
   const rsu = parseFloat(document.getElementById('h_rsu').value)||0;
   const unlisted = parseFloat(document.getElementById('h_unlisted').value)||0;
+  const crowdcube = parseFloat(document.getElementById('h_crowdcube').value)||0;
   const gold = parseFloat(document.getElementById('h_gold').value)||0;
   const ppf = parseFloat(document.getElementById('h_ppf').value)||0;
   const pf = parseFloat(document.getElementById('h_pf').value)||0;
   const retirement = ppf + pf;
-  const total = equity + rsu + unlisted + gold + ppf + pf;
+  const total = equity + rsu + unlisted + crowdcube + gold + ppf + pf;
   const existing = history.findIndex(h => h.month === month);
-  const entry = { month, total, equity, rsu, unlisted, gold, retirement, ppf, pf };
+  const entry = { month, total, equity, rsu, unlisted, crowdcube, gold, retirement, ppf, pf };
   if (existing >= 0) history[existing] = entry; else history.push(entry);
   save('nw_history', history);
+  assets = seedAssetsFromHistory();
+  save('nw_assets', assets);
   closeHistory(); renderAll();
 }
 function deleteHistory(month) {
@@ -634,13 +708,14 @@ function confirmSnapshot() {
   const month = now.toISOString().slice(0,7);
   const equity = (assets.find(a=>a.id==='equity')?.value)||0;
   const rsu = (assets.find(a=>a.id==='rsu')?.value)||0;
-  const unlisted = ((assets.find(a=>a.id==='unlisted')?.value)||0) + ((assets.find(a=>a.id==='crowdcube')?.value)||0);
+  const unlisted = (assets.find(a=>a.id==='unlisted')?.value)||0;
+  const crowdcube = (assets.find(a=>a.id==='crowdcube')?.value)||0;
   const gold = (assets.find(a=>a.id==='gold')?.value)||0;
   const ppf = (assets.find(a=>a.id==='ppf')?.value)||0;
   const pf = (assets.find(a=>a.id==='pf')?.value)||0;
   const retirement = ppf + pf;
   const total = getTotal();
-  const entry = { month, total, equity, rsu, unlisted, gold, retirement, ppf, pf };
+  const entry = { month, total, equity, rsu, unlisted, crowdcube, gold, retirement, ppf, pf };
   const existing = history.findIndex(h => h.month === month);
   if (existing >= 0) history[existing] = entry; else history.push(entry);
   save('nw_history', history);
